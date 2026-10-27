@@ -1,0 +1,13 @@
+<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WhatsApp · operador</title>
+<style>body{font:18px system-ui;max-width:42rem;margin:4rem auto;padding:1rem;background:#10151d;color:#f7f8fb}input,button{font:inherit;padding:.7rem;margin:.4rem 0}img{display:block;max-width:18rem}button{cursor:pointer}label{display:block}</style>
+<h1>Conectar mi propio chat</h1><p>Baileys no es una API oficial de WhatsApp. Solo se procesan mensajes nuevos de su propio chat. No abra dos conectores para la misma cuenta.</p>
+<label>Clave del operador <input id="key" type="password" autocomplete="off"></label><button id="unlock">Desbloquear</button>
+<p id="state" role="status">Bloqueado</p><button id="connect" disabled>Iniciar vinculación</button><button id="stop" disabled>Detener</button><img id="qr" hidden alt="Código QR privado para vincular su cuenta">
+<script>
+let token='',csrf='',timer;const find=id=>document.getElementById(id);
+async function api(path,method='GET'){const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token,'X-CSRF-Token':csrf}});if(!r.ok)throw Error();return r.json()}
+async function refresh(){try{const s=await api('/api/status');csrf=s.csrf;find('state').textContent=s.status;const q=await api('/api/qr');find('qr').hidden=!q.image;if(q.image)find('qr').src=q.image;else find('qr').removeAttribute('src')}catch{clearInterval(timer);find('state').textContent='Acceso no disponible. No se reintentó la conexión.'}}
+find('unlock').onclick=async()=>{token=find('key').value;find('key').value='';await refresh();if(csrf){find('connect').disabled=false;find('stop').disabled=false;timer=setInterval(refresh,2500)}};
+find('connect').onclick=async()=>{find('connect').disabled=true;try{await api('/api/connect','POST');await refresh()}catch{find('state').textContent='Inicio no disponible'}};
+find('stop').onclick=async()=>{await api('/api/stop','POST');await refresh()};
+</script></html>
