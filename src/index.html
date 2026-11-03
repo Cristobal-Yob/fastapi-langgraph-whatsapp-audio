@@ -57,7 +57,7 @@ async function refresh(){
   }
   find('detail').textContent=status.status==='connected' ? 'Vinculación confirmada. Envíe un mensaje nuevo en Mensaje para ti.' :
    status.status==='review_required' ? 'Resultado no confirmado. Revise Dispositivos vinculados en su celular, pulse Desconectar y luego Iniciar nuevo intento. No se solicitó otro código automáticamente.' :
-   status.status==='stopping' ? 'Espere a que terminen las operaciones anteriores. No se borrarán sus credenciales.' :
+   status.status==='stopping' ? 'Espere a que terminen las operaciones anteriores. Se borrará la sesión local de WhatsApp para iniciar una vinculación nueva.' :
    status.code_state==='pending' ? 'Solicitando el código una sola vez. Espere sin reenviar el formulario.' : 'El código se borra al vencer o desconectar. No es un SMS ni confirma todavía la vinculación.';
  }catch{if(!current())return;clearInterval(timer);clearPrivate();find('linking').hidden=true;find('connect').disabled=true;find('stop').disabled=true;find('state').textContent='Acceso no disponible. Desbloquee de nuevo para consultar el estado.';}
  finally{if(refreshController===controller)refreshController=null;}

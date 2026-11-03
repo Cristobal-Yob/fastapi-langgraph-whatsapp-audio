@@ -18,7 +18,7 @@ async function fixture(t) {
         codeResult:()=>({code:'TESTCODE',expires_at:Date.now()+1000}),selectMode(mode){this.mode=mode;return true}},
       connect:async()=>{value.status='connecting'},requestCode:()=>{value.calls++;return true},
       halt:()=>{value.closed=true;value.status='review_required'},
-      close:()=>{value.halt();return new Promise(resolve=>release=resolve)}};
+      close:options=>{value.closeOptions=options;value.halt();return new Promise(resolve=>release=resolve)}};
     instances.push(value);return value;
   };
   const {server,close}=createOperatorServer({createGateway,token,origin,encodeQr:async()=> 'data:image/png;base64,synthetic'});
@@ -28,7 +28,7 @@ async function fixture(t) {
   const status=await fetch(base+'/api/status',{headers});const csrf=(await status.json()).csrf;
   headers['X-CSRF-Token']=csrf;headers['Content-Type']='application/json';
   t.after(async()=>{const pending=close();await flush();release?.();await pending;server.closeAllConnections();await new Promise(resolve=>server.close(resolve))});
-  return {base,headers,instances,server,release:()=>release?.()};
+  return {base,headers,instances,server,shutdown:close,release:()=>release?.()};
 }
 
 test('code and mode endpoints retain bearer, Origin, CSRF and strict bounded input',async t=>{
@@ -164,4 +164,28 @@ test('slow code and mode bodies cannot mutate a new attempt after stop and recon
     assert.equal(f.instances.length,2);assert.equal(f.instances[1].calls,0);
     assert.equal(f.instances[1].pairing.mode,'code');
   }
+});
+
+
+test('only protected explicit stop requests auth reset; process shutdown preserves it',async t=>{
+  const explicit=await fixture(t);
+  assert.equal((await fetch(explicit.base+'/api/stop',{method:'POST'})).status,401);
+  assert.equal(explicit.instances[0].closeOptions,undefined);
+  assert.equal((await fetch(explicit.base+'/api/stop',{method:'POST',headers:explicit.headers})).status,202);
+  await flush();assert.equal(explicit.instances[0].closeOptions.resetAuth,true);
+  const again=await fetch(explicit.base+'/api/stop',{method:'POST',headers:explicit.headers});
+  assert.equal(again.status,202);explicit.release();await flush();
+  const shutdown=await fixture(t);const closing=shutdown.shutdown();await flush();
+  assert.equal(shutdown.instances[0].closeOptions.resetAuth,false);shutdown.release();await closing;
+});
+
+test('failed auth reset stays review_required, blocks new start and permits explicit stop retry',async t=>{
+  const f=await fixture(t);let attempts=0;
+  f.instances[0].close=async options=>{assert.equal(options.resetAuth,true);f.instances[0].halt();if(++attempts===1)throw Error('synthetic reset failure')};
+  await fetch(f.base+'/api/stop',{method:'POST',headers:f.headers});await flush();
+  assert.equal((await (await fetch(f.base+'/api/status',{headers:f.headers})).json()).status,'review_required');
+  assert.equal((await fetch(f.base+'/api/connect',{method:'POST',headers:f.headers})).status,409);
+  await fetch(f.base+'/api/stop',{method:'POST',headers:f.headers});await flush();
+  assert.equal((await (await fetch(f.base+'/api/status',{headers:f.headers})).json()).status,'stopped');
+  assert.equal(attempts,2);
 });

@@ -26,7 +26,7 @@ del mantenedor ni copie su historial. En la carpeta nueva:
 git init -b main
 $SourceFiles = @(
     'src/pairing.mjs', 'src/server.mjs', 'test/pairing.test.mjs',
-    'test/operator.test.mjs', 'test/network-guard.mjs', 'test/docs.test.mjs',
+    'test/operator.test.mjs', 'test/network-guard.mjs', 'test/docs.test.mjs', 'test/reset.test.mjs',
     'DURABILIDAD.md',
     '.env.example', '.gitattributes', '.gitignore',
     '.python-version', 'Aptfile', 'CONFIGURACION.md',
@@ -249,7 +249,7 @@ No es un SMS. **Conectado**, no la aparición del código, confirma la sesión. 
 mensaje nuevo en Mensaje para ti. QR es una alternativa manual antes de pedir el código.
 
 Si el resultado no se confirma, revise su celular, pulse **Desconectar**, espere el cierre
-y pulse **Iniciar nuevo intento**. No reinicie Heroku ni borre autenticación para reintentar
+y pulse **Iniciar nuevo intento**. Desconectar borra la sesión local para una vinculación nueva. No reinicie Heroku ni borre autenticación manualmente para reintentar
 desde el panel. Use un solo conector por celular, tanto al probar texto como texto/audio.
 El deploy/reinicio del dyno sí puede perder la sesión por disco efímero. El recorrido completo,
 los límites y la privacidad están en [CONFIGURACION.md](CONFIGURACION.md).

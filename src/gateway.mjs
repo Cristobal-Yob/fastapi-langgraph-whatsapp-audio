@@ -23,7 +23,8 @@ export class Gateway {
     if(this.closed)return;
     this.status='review_required';this.closed=true;this.ready=null;this.qr=null;this.generation++;
     clearTimeout(this.reconnectTimer);this.pairing.stop();this.queue.length=0;
-    try{this.socket?.end(Error('transport_stopped'))}catch{}
+    try{this.socketClosed=Promise.resolve(this.socket?.end(Error('transport_stopped')))}catch(error){this.socketClosed=Promise.reject(error)}
+    this.socketClosed.catch(()=>{});
     this.pipelineClosed=Promise.resolve().then(()=>this.pipeline?.close());
     this.pipelineClosed.catch(()=>{});
   }
@@ -32,7 +33,7 @@ export class Gateway {
     this.status='preparing';
     this.opening=Promise.resolve().then(()=>this.closed ? null : this.openStore());
     this.store=await this.opening;
-    if(this.closed) {if(this.store)await this.store.close();return;}
+    if(this.closed)return;
     this.store.onLost=()=>this.halt();this.openSocket(true);
   }
   openSocket(newAttempt=false) {
@@ -113,14 +114,17 @@ export class Gateway {
       await this.store.done('out:'+id); await this.store.done('in:'+item.id);
     }
   }
-  close() {
-    if(this.closePromise)return this.closePromise;
-    this.halt();
+  close({resetAuth=false}={}) {
+    if(resetAuth && this.closePromise && !this.resetRequested)return Promise.reject(Error('transport_already_closed'));
+    if(this.closePromise && !(resetAuth && this.closeFailed))return this.closePromise;
+    this.resetRequested=resetAuth;this.closeFailed=false;this.halt();
     this.closePromise=(async()=>{
-      const results=await Promise.allSettled([this.opening,this.serial,this.drainPromise,this.pipelineClosed,this.authWrites]);
-      if(this.store)await this.store.close();
+      const results=await Promise.allSettled([this.opening,this.serial,this.drainPromise,this.pipelineClosed,this.socketClosed,this.authWrites]);
+      await this.drainPromise;
       if(results.some(result=>result.status==='rejected'))throw Error('transport_close_incomplete');
-    })();
+      if(resetAuth && !this.store)this.store=await this.openStore();
+      if(this.store)await this.store.close({resetAuth});
+    })().catch(error=>{this.closeFailed=true;throw error});
     return this.closePromise;
   }
 }

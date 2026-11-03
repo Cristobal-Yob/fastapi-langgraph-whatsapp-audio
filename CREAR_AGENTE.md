@@ -26,7 +26,7 @@ $null = New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Fo
 $null = New-Item -ItemType Directory -Path $Destination
 $SourceFiles = @(
     'src/pairing.mjs', 'src/server.mjs', 'test/pairing.test.mjs',
-    'test/operator.test.mjs', 'test/network-guard.mjs', 'test/docs.test.mjs',
+    'test/operator.test.mjs', 'test/network-guard.mjs', 'test/docs.test.mjs', 'test/reset.test.mjs',
     'DURABILIDAD.md',
     '.env.example', '.gitattributes', '.gitignore',
     '.python-version', 'Aptfile', 'CONFIGURACION.md',
@@ -297,4 +297,4 @@ Después de publicar su commit en GitHub y desplegarlo según `HEROKU.md`, siga
 [la vinculación por código](CONFIGURACION.md). El número y el código se introducen solo
 en el panel privado, nunca en `.env`. QR sigue disponible como alternativa manual.
 Un resultado incierto requiere revisar el celular, Desconectar e Iniciar nuevo intento;
-no se borra la sesión ni se reinicia Heroku para esa acción del panel.
+Desconectar borra la sesión local después de cerrar las operaciones pendientes; el siguiente intento requiere vincular de nuevo la cuenta, sin reiniciar Heroku.

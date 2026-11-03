@@ -7,7 +7,7 @@ test('copy and git allowlists include the actual pairing implementation and offl
     const text=await readFile(new URL('../'+filename,import.meta.url),'utf8');
     const list=text.match(/\$SourceFiles\s*=\s*@\(([\s\S]*?)\)/)?.[1]??'';
     for(const path of ['src/pairing.mjs','src/server.mjs','test/pairing.test.mjs',
-      'test/operator.test.mjs','test/network-guard.mjs','test/docs.test.mjs'])
+      'test/operator.test.mjs','test/network-guard.mjs','test/docs.test.mjs','test/reset.test.mjs'])
       assert.ok(list.includes("'"+path+"'"),filename+' must include '+path);
   }
 });

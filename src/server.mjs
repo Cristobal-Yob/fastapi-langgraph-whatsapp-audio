@@ -25,11 +25,11 @@ export function createOperatorServer({createGateway,token,origin,encodeQr=value=
     throw Error('operator_configuration_required');
   let gateway=createGateway(), lifecycle='idle', stopping=null, lifecycleRevision=0;
   const csrf=randomBytes(32).toString('base64url');
-  const stop=()=>{
+  const stop=({resetAuth=false}={})=>{
     if(stopping) return stopping;
     if(lifecycle==='stopped') return Promise.resolve();
     lifecycle='stopping';lifecycleRevision++; const previous=gateway;
-    stopping=Promise.resolve().then(()=>previous.close()).then(()=>{
+    stopping=Promise.resolve().then(()=>previous.close({resetAuth})).then(()=>{
       if(gateway===previous)lifecycle='stopped';
     }).catch(()=>{if(gateway===previous)lifecycle='review_required'}).finally(()=>{stopping=null});
     return stopping;
@@ -52,7 +52,7 @@ export function createOperatorServer({createGateway,token,origin,encodeQr=value=
       if(req.method==='GET' && req.url==='/api/qr')return json(res,200,{image:
         lifecycle==='idle' && !gateway.closed && gateway.pairing.mode==='qr' && gateway.qr ? await encodeQr(gateway.qr) : null});
       if(req.method==='POST' && req.url==='/api/connect') {
-        if(lifecycle==='stopping' || stopping || (lifecycle!=='stopped' && gateway.status!=='disabled'))
+        if(stopping || !['idle','stopped'].includes(lifecycle) || (lifecycle==='idle' && gateway.status!=='disabled'))
           return json(res,409,{error:'disconnect_before_new_attempt'});
         if(!gateway.enabled())return json(res,403,{error:'connection_not_authorized'});
         if(lifecycle==='stopped') { gateway=createGateway(); lifecycle='idle'; }
@@ -60,7 +60,7 @@ export function createOperatorServer({createGateway,token,origin,encodeQr=value=
         void starting.connect().catch(()=>starting.halt());
         return json(res,202,{status:'preparing'});
       }
-      if(req.method==='POST' && req.url==='/api/stop') { void stop(); return json(res,202,{status:lifecycle}); }
+      if(req.method==='POST' && req.url==='/api/stop') { void stop({resetAuth:true}); return json(res,202,{status:lifecycle}); }
       if(req.method==='POST' && req.url==='/api/mode') {
         const target=gateway,revision=lifecycleRevision;
         let mode;try{mode=await body(req,'mode')}catch{return json(res,400,{error:'invalid_link_mode'})}
@@ -79,5 +79,5 @@ export function createOperatorServer({createGateway,token,origin,encodeQr=value=
     } catch { return json(res,503,{error:'operation_unavailable_no_automatic_retry'}); }
   });
   server.requestTimeout=10000;server.headersTimeout=10000;
-  return {server,close:stop};
+  return {server,close:()=>stop()};
 }

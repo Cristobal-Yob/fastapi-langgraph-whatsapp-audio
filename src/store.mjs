@@ -1,21 +1,21 @@
 import { useMultiFileAuthState } from '@whiskeysockets/baileys';
-import { mkdir, chmod, lstat, readdir } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { mkdir, chmod, lstat, readdir, realpath, unlink, rmdir } from 'node:fs/promises';
+import { dirname, resolve, parse } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const owners = new Map();
 const defaultDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../.runtime/whatsapp-auth');
 
 export class Store {
-  constructor(directory, capacity) {
-    Object.assign(this,{directory,capacity,active:true}); this.claims=new Map();
+  constructor(directory, capacity, authRoot=defaultDirectory) {
+    Object.assign(this,{directory,capacity,authRoot:resolve(authRoot),active:true}); this.claims=new Map();
     this.closing=false; this.authTail=Promise.resolve(); this.closePromise=null;
   }
-  static async open({directory=defaultDirectory,capacity=2048}={}) {
+  static async open({directory=defaultDirectory,capacity=2048,authRoot=defaultDirectory}={}) {
     directory=resolve(directory);
     if (!Number.isInteger(capacity)||capacity<1||capacity>8192) throw Error('invalid_claim_capacity');
     if (owners.has(directory)) throw Error('single_owner_already_active');
-    const store=new Store(directory,capacity);
+    const store=new Store(directory,capacity,authRoot);
     owners.set(directory,store);
     try {
       await mkdir(directory,{recursive:true,mode:0o700});
@@ -69,13 +69,34 @@ export class Store {
   }
   async known(key) {this.assertOwner();return this.claims.has(key);}
   async done(key) {this.assertOwner();const value=this.claims.get(key);if(!value)throw Error('unknown_claim');value.status='done';}
-  close() {
-    if(this.closePromise)return this.closePromise;
-    this.closing=true;
-    this.closePromise=this.authTail.then(()=>{
+  async removeAuth() {
+    const target=resolve(this.directory),root=resolve(this.authRoot);
+    if(target!==root || root===parse(root).root || owners.get(target)!==this)
+      throw Error('unsafe_auth_reset');
+    for(let path=target;;path=dirname(path)) {
+      const info=await lstat(path);
+      if(!info.isDirectory() || info.isSymbolicLink())throw Error('unsafe_auth_reset');
+      if(path===dirname(path))break;
+    }
+    if(await realpath(target)!==target)throw Error('unsafe_auth_reset');
+    const files=await readdir(target);
+    for(const name of files) {
+      const info=await lstat(resolve(target,name));
+      if(!info.isFile() || info.isSymbolicLink() || !name.endsWith('.json'))throw Error('unsafe_auth_reset');
+    }
+    // Native auth is flat: never recursively traverse a directory during reset.
+    for(const name of files)await unlink(resolve(target,name));
+    await rmdir(target);
+  }
+  close({resetAuth=false}={}) {
+    if(resetAuth && this.closePromise && !this.resetRequested)return Promise.reject(Error('ownership_lost'));
+    if(this.closePromise && !(resetAuth && this.resetFailed))return this.closePromise;
+    this.closing=true;this.resetRequested=resetAuth;this.resetFailed=false;
+    this.closePromise=this.authTail.then(async()=>{
       this.active=false;this.claims.clear();
+      if(resetAuth)await this.removeAuth();
       if(owners.get(this.directory)===this)owners.delete(this.directory);
-    });
+    }).catch(error=>{this.resetFailed=resetAuth;throw error});
     return this.closePromise;
   }
 }
