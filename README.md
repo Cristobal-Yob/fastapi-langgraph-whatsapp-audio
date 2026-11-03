@@ -1,29 +1,39 @@
-# WhatsApp de texto y audio
+# WhatsApp Web con audio
 
-Proyecto autónomo con su propio router, responder y fallback LangGraph. No necesita otro repositorio ni una API central. Estado: fuentes preparadas, **no desplegado**. No se han probado cuentas ni proveedores reales en esta variante cloud.
+Plantilla autónoma para construir un agente propio sobre el mismo LangGraph:
+mensaje → router → respuesta real con fallback → entrega del adaptador.
+No depende de otro repositorio ni de una API central.
 
-## Comenzar desde cero
+## Crear su agente y desplegar
 
-1. Instale Python 3.12 y cree un entorno nuevo: `python -m venv .venv`.
-2. Actívelo: Windows `.venv\Scripts\Activate.ps1`; Linux/macOS `source .venv/bin/activate`.
-3. Instale `python -m pip install -r requirements-dev.txt`.
-4. Copie `.env.example` a `.env`, genere sus propias claves y complete únicamente su configuración.
-5. Ejecute `python -B -m unittest discover -s tests -v` y siga [la preparación específica](HEROKU.md#preparación-específica).
-6. Inicie `python -B -m cloud.run`. La comprobación local es `http://localhost:8000/health`.
+1. [Copiar las fuentes y personalizar rol, criterios y una herramienta de lectura opcional](CREAR_AGENTE.md).
+2. [Preparar su Git y desplegar con Heroku CLI](HEROKU.md).
+3. Completar la configuración de su canal y verificar una acción real autorizada.
 
-La clave base se genera con `python -c "import secrets; print(secrets.token_urlsafe(32))"`. No use contraseñas humanas ni copie claves de otro ejemplo. El servidor rechaza secretos débiles y no imprime contenido de conversaciones ni errores de proveedores.
+Consulte además [la configuración específica del canal](CONFIGURACION.md) antes de activarlo.
 
-## Contrato y límites
+## Archivos principales
 
-- Un único operador, un proceso Python y un dyno. No es una aplicación multiusuario ni multiworker.
-- `POST /chat` autenticado devuelve 202 y `status_url`; consulte esa URL con el mismo bearer hasta `done` o `failed`. `request_id` es obligatorio. Un identificador con distinto contenido devuelve 409. Los adaptadores incluidos hacen esta consulta sin reenviar el mensaje.
-- El trabajo asincrónico conserva ambas etapas del grafo y el fallback de cada una. Las peticiones HTTP individuales son cortas; no se eleva un timeout para eludir los 30 segundos del router Heroku.
-- Conversaciones, resultados y colas son RAM limitada: 64 conversaciones, 6 turnos, 128 trabajos por proceso y 8 trabajos activos. Se pierden al reiniciar. Un trabajo perdido no autoriza repetir efectos.
-- Las reservas de correo, credenciales WhatsApp y prueba pagada requieren PostgreSQL externo y claves estables. Un resultado incierto nunca se repite automáticamente. No se guardan audios ni transcripciones en disco.
-- `/health` solo confirma proceso HTTP, no credenciales, conexión WhatsApp ni entrega. Pruebas sintéticas no demuestran envío, recepción humana ni reproducción audiovisual real.
+- `app/`: grafo, prompts, proveedor/fallback y memoria RAM acotada.
+- `cloud/api.py`: `POST /chat` interno o público según variante, autenticado y con plazo máximo de 25 segundos.
+- `Procfile`: entrada exacta de este adaptador en Heroku, con su `PORT`.
+- `.env.example`: nombres de configuración, nunca credenciales reales.
+- `tests/`: contratos sintéticos, no resultados reales de proveedores.
 
-## Siguiente paso
+Estas fuentes y guías son una entrega local: todavía no se han publicado ni desplegado.
+Conserve credenciales, sesiones y registros fuera de Git. El catálogo no añade telefonía.
 
-[Guía Heroku desde cero](HEROKU.md) · [Procedencia y cambios](SOURCE.md)
+## Alcance del grafo
 
-Commit sugerido cuando el propietario lo autorice: `feat(whatsapp-audio): add autonomous LangGraph Heroku teaching app`.
+Router → preventa/postventa/genérica → respuesta → fin. No incluye política, nodos ni transporte de correo. Los prompts están en español.
+
+## Variables de este ejemplo
+
+Use únicamente su [`.env.example`](.env.example): ocho variables comunes y las específicas
+del canal que aparecen allí. Los comentarios separan arranque, opciones y activación.
+
+## Estado básico y ampliación
+
+Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir otro QR y pierde la deduplicación.
+
+[Persistencia opcional y límites](DURABILIDAD.md).

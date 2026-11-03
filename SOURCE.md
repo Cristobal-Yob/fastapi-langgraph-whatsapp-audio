@@ -2,7 +2,7 @@
 
 La base procede del starter local FastAPI/LangGraph revisado el 27 de octubre de 2026. Se copian únicamente fuentes allowlisted; no historial Git, configuración privada, entornos ni estado de cuentas.
 
-`app/graph.py`, `app/prompts.py`, `app/provider.py` y `app/memory.py` conservan los bytes de la base. `app/email_delivery.py` conserva la gramática y planificación, con una frontera cloud nueva. `cloud/` añade autenticación de un operador, trabajos asincrónicos y reservas PostgreSQL antes de efectos. Los adaptadores propios conservan guardas de identidad, voz y/o SDK según corresponda; configuración local Windows/archivos se reemplaza por variables y estado cifrado externo, nunca por eliminación de controles.
+Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir otro QR y pierde la deduplicación.
 
 Hashes SHA-256 de la base:
 

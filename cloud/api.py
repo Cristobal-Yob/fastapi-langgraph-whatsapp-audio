@@ -1,14 +1,15 @@
-"""Authenticated async jobs: HTTP returns before router/responder/fallback work."""
+"""One authenticated request, one bounded LangGraph response. No background jobs."""
 import asyncio
-from contextlib import asynccontextmanager
 import hashlib
+import ipaddress
 import json
 import os
 import time
+from collections import OrderedDict
 from typing import Annotated, Literal
-from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.security import HTTPBearer
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from langsmith import tracing_context
@@ -29,25 +30,19 @@ class ChatInput(BaseModel):
     audio_capable: bool = False
 
 
-def create_app(*, graph=None, mail=None):
+def create_app(*, graph=None, request_timeout=25):
+    if not 0 < request_timeout <= 25:
+        raise ValueError("request_timeout must be greater than zero and at most 25 seconds.")
     token = validate_token(os.environ.get('AGENT_API_TOKEN', ''))
     memory = ConversationStore()
-    jobs, requests, tasks = {}, {}, set()
+    requests, active = OrderedDict(), set()
     variant = os.environ.get('APP_VARIANT', 'base')
     expected_origin = os.environ.get('PUBLIC_ORIGIN','')
-    if mail is None:
-        from cloud.mail import MailRuntime
-        mail = MailRuntime(mode='mcp' if variant == 'gmail-mcp' else 'direct', allowed=variant in {'gmail','gmail-mcp'})
-
-    @asynccontextmanager
-    async def lifespan(app):
-        yield
-        for task in tuple(tasks): task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        mail.close()
-
-    app = FastAPI(title='Autonomous LangGraph teaching API', docs_url=None,
-                  redoc_url=None, openapi_url=None, lifespan=lifespan)
+    swagger = variant == 'base'
+    bearer = HTTPBearer(scheme_name='OperatorToken',auto_error=False,
+                       description='Generated bearer secret for the single operator.')
+    app = FastAPI(title='Autonomous LangGraph teaching API', docs_url='/docs' if swagger else None,
+                  redoc_url=None, openapi_url='/openapi.json' if swagger else None)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, error):
@@ -55,11 +50,16 @@ def create_app(*, graph=None, mail=None):
 
     @app.middleware('http')
     async def boundary(request, next_call):
-        public = request.url.path == '/health' or (variant == 'frontend' and request.method == 'GET' and request.url.path == '/')
+        request.state.deadline = time.monotonic() + request_timeout
+        public = (request.url.path == '/health'
+                  or (variant == 'frontend' and request.method == 'GET' and request.url.path == '/')
+                  or (swagger and request.method == 'GET' and request.url.path in {'/docs','/openapi.json'}))
         if not public:
             try: authenticate(request, token)
             except HTTPException as error:
                 return JSONResponse({'detail':error.detail}, status_code=error.status_code)
+            if expected_origin.startswith('http://') and (not request.client or not ipaddress.ip_address(request.client.host).is_loopback):
+                return JSONResponse({'detail':'trusted_origin_required'}, status_code=403)
             if request.headers.get('origin') and request.headers['origin'] != expected_origin:
                 return JSONResponse({'detail':'trusted_origin_required'}, status_code=403)
             try: size = int(request.headers.get('content-length', '0'))
@@ -84,10 +84,26 @@ def create_app(*, graph=None, mail=None):
     @app.get('/health')
     async def health(): return {'status':'ok'}
 
-    async def execute(job, payload, conversation_id):
+    @app.post('/chat', dependencies=[Depends(bearer)])
+    async def chat(payload: ChatInput, request: Request):
         nonlocal graph
+        if payload.response_delivery == 'audio' and not payload.audio_capable:
+            raise HTTPException(422, 'audio_capability_required')
+        digest = hashlib.sha256(json.dumps(payload.model_dump(), sort_keys=True).encode()).hexdigest()
+        if payload.request_id in requests:
+            old_digest, answer = requests[payload.request_id]
+            if old_digest != digest:
+                raise HTTPException(409, 'request_payload_conflict')
+            requests.move_to_end(payload.request_id)
+            return answer
+        if payload.request_id in active:
+            raise HTTPException(409, 'request_in_progress_no_automatic_retry')
+        if len(active) >= 8:
+            raise HTTPException(503, 'capacity_reached')
+        conversation_id = payload.conversation_id or 'req-'+hashlib.sha256(payload.request_id.encode()).hexdigest()[:48]
+        active.add(payload.request_id)
         try:
-            async with asyncio.timeout(150):
+            async with asyncio.timeout(max(0.001, request.state.deadline-time.monotonic())):
                 async with memory.use(conversation_id) as conversation:
                     if graph is None:
                         from app.provider import create_graph
@@ -95,55 +111,33 @@ def create_app(*, graph=None, mail=None):
                     with tracing_context(enabled=False):
                         result = await graph.ainvoke({'message':payload.message,
                             'history':list(conversation.turns),'conversation_id':conversation_id,
-                            'request_id':payload.request_id,'email_pending':conversation.pending_email,
-                            'email_now':time.time(),'email_authorized':True,'email_dispatch':mail.dispatch,
+                            'request_id':payload.request_id,
                             'response_delivery':payload.response_delivery,'audio_capable':payload.audio_capable})
                     keys = ('route','reason','response','provider','backend','model_used','fallback_used',
-                            'response_model_used','response_fallback_used','email')
+                            'response_model_used','response_fallback_used')
                     answer = {key:result[key] for key in keys if key in result}
                     answer['conversation_id'] = conversation_id
-                    conversation.pending_email = result.get('email_pending')
                     conversation.turns.append({'user':payload.message,'assistant':result['response']})
-                    job.update(status='done', result=answer)
+                    requests[payload.request_id] = (digest, answer)
+                    if len(requests) > 128:
+                        requests.popitem(last=False)
+                    return answer
+        except TimeoutError:
+            raise HTTPException(504, 'agent_timeout_no_automatic_retry') from None
         except asyncio.CancelledError:
-            job.update(status='failed', error='interrupted_no_automatic_retry')
             raise
         except Exception:
-            job.update(status='failed', error='agent_unavailable_no_automatic_retry')
+            raise HTTPException(503, 'agent_unavailable_no_automatic_retry') from None
         finally:
-            job['finished'] = time.monotonic()
+            active.discard(payload.request_id)
 
-    @app.post('/chat', status_code=202)
-    async def chat(payload: ChatInput):
-        if payload.response_delivery == 'audio' and not payload.audio_capable:
-            raise HTTPException(422, 'audio_capability_required')
-        # Fixed-capacity teaching process; never evict request identities and accidentally replay.
-        digest = hashlib.sha256(json.dumps(payload.model_dump(), sort_keys=True).encode()).hexdigest()
-        if payload.request_id in requests:
-            old_digest, job_id = requests[payload.request_id]
-            if old_digest != digest: raise HTTPException(409, 'request_payload_conflict')
-            return {'status_url':'/jobs/'+job_id}
-        if len(jobs) >= 128 or len(tasks) >= 8:
-            raise HTTPException(503, 'capacity_reached')
-        job_id = uuid4().hex
-        conversation_id = payload.conversation_id or 'req-'+hashlib.sha256(payload.request_id.encode()).hexdigest()[:48]
-        jobs[job_id] = {'status':'running'}
-        requests[payload.request_id] = (digest, job_id)
-        task = asyncio.create_task(execute(jobs[job_id], payload, conversation_id))
-        tasks.add(task)
-        task.add_done_callback(tasks.discard)
-        return {'status_url':'/jobs/'+job_id}
-
-    @app.get('/jobs/{job_id}')
-    async def status(job_id: str):
-        if job_id not in jobs: raise HTTPException(404, 'job_not_found_do_not_replay_effects')
-        return {k:v for k,v in jobs[job_id].items() if k != 'finished'}
-
-    @app.delete('/conversations/{conversation_id}', status_code=204)
+    @app.delete('/conversations/{conversation_id}', status_code=204,dependencies=[Depends(bearer)])
     async def reset(conversation_id: Identifier):
         try: removed = memory.reset(conversation_id)
         except Exception: raise HTTPException(409, 'conversation_busy') from None
         if not removed: raise HTTPException(404, 'conversation_not_found')
+        for key, (_, answer) in tuple(requests.items()):
+            if answer['conversation_id'] == conversation_id: requests.pop(key)
         return Response(status_code=204)
 
     return app

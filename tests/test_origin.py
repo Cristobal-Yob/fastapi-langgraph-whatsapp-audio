@@ -17,3 +17,10 @@ class OriginTests(unittest.IsolatedAsyncioTestCase):
                 response = await http.post('/chat',headers={'Authorization':'Bearer '+TOKEN,
                     'Origin':'https://untrusted.example.invalid'},json={'message':'test','request_id':'synthetic'})
                 self.assertEqual(response.status_code,403)
+
+    def test_http_origin_is_only_allowed_on_local_loopback(self):
+        from cloud.security import public_origin
+        with patch.dict(os.environ,{'PUBLIC_ORIGIN':'http://127.0.0.1:8000'},clear=True):
+            self.assertEqual(public_origin(),'http://127.0.0.1:8000')
+        with patch.dict(os.environ,{'PUBLIC_ORIGIN':'http://127.0.0.1:8000','DYNO':'web.1'},clear=True):
+            with self.assertRaises(ValueError): public_origin()

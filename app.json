@@ -1,0 +1,84 @@
+{
+  "name": "fastapi-langgraph-whatsapp-audio",
+  "description": "Un mismo LangGraph, adaptador propio y respuesta directa.",
+  "stack": "heroku-24",
+  "buildpacks": [
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-apt"
+    },
+    {
+      "url": "heroku/nodejs"
+    },
+    {
+      "url": "heroku/python"
+    }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 0,
+      "size": "basic"
+    }
+  },
+  "env": {
+    "AGENT_API_TOKEN": {
+      "description": "Requerida: bearer propio generado con secrets.token_urlsafe(32); nunca reutilice el de otra aplicaciÃ³n.",
+      "required": true
+    },
+    "PUBLIC_ORIGIN": {
+      "description": "Origen HTTPS exacto de esta aplicaciÃ³n en Heroku, sin barra final; localmente use el origen de la prueba del nÃºcleo.",
+      "required": true
+    },
+    "GOOGLE_GENAI_USE_VERTEXAI": {
+      "description": "Selector explÃ­cito del ejemplo: false usa Google Developer API. Para Vertex configure la alternativa descrita en CREAR_AGENTE.md.",
+      "required": false,
+      "value": "false"
+    },
+    "GOOGLE_API_KEY": {
+      "description": "Requerida para responder con Google Developer API, la ruta predeterminada. La alternativa Vertex con identidad autorizada se configura por CLI.",
+      "required": true
+    },
+    "MODELO": {
+      "description": "Opcional: modelo principal disponible en su cuenta. Debe ser distinto del fallback.",
+      "required": false,
+      "value": "gemini-3.5-flash-lite"
+    },
+    "FALLBACK_MODEL": {
+      "description": "Opcional: modelo de respaldo disponible en su cuenta y distinto del principal.",
+      "required": false,
+      "value": "gemini-3.5-flash"
+    },
+    "LANGSMITH_TRACING": {
+      "description": "Control de privacidad de LangSmith; conserve false para no enviar trazas de conversaciones.",
+      "required": false,
+      "value": "false"
+    },
+    "LANGCHAIN_TRACING_V2": {
+      "description": "Control compatible de trazas LangChain; conserve false.",
+      "required": false,
+      "value": "false"
+    },
+    "WA_ENABLE_CONNECTION": {
+      "description": "ActivaciÃ³n explÃ­cita del conector WhatsApp Web; conserve false durante la preparaciÃ³n. TambiÃ©n se exige Conectar en la pÃ¡gina.",
+      "required": false,
+      "value": "false"
+    },
+    "ELEVENLABS_API_KEY": {
+      "description": "Clave privada de ElevenLabs; necesaria para los proveedores de voz de esta variante. Requerida al arrancar el conector completo, aun sin vinculaciÃ³n.",
+      "required": true
+    },
+    "ELEVENLABS_VOICE_ID": {
+      "description": "Identificador de una voz autorizada en su cuenta de ElevenLabs. Requerida al arrancar el conector completo, aun sin vinculaciÃ³n.",
+      "required": true
+    },
+    "APP_VARIANT": {
+      "description": "Identidad fija de esta plantilla, coherente con variant.json; no la cambie ni copie otra variante.",
+      "required": false,
+      "value": "whatsapp-audio"
+    },
+    "WEB_CONCURRENCY": {
+      "description": "Un único proceso conserva la memoria temporal, las reservas y la deduplicación de esta plantilla. No aumente este valor sin diseñar coordinación externa.",
+      "required": false,
+      "value": "1"
+    }
+  }
+}

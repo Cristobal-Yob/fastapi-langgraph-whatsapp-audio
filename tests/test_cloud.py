@@ -26,7 +26,7 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError): validate_token(value)
         self.assertEqual(validate_token(TOKEN), TOKEN)
 
-    async def test_authenticated_async_turn_and_idempotency(self):
+    async def test_authenticated_direct_turn_and_idempotency(self):
         graph = Graph()
         with patch.dict(os.environ, {'AGENT_API_TOKEN': TOKEN, 'APP_VARIANT':'base'}):
             app = create_app(graph=graph)
@@ -35,16 +35,12 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await client.post('/chat', json=payload)).status_code, 401)
             headers = {'Authorization':'Bearer '+TOKEN}
             response = await client.post('/chat', json=payload, headers=headers)
-            self.assertEqual(response.status_code, 202)
-            location = response.json()['status_url']
-            self.assertEqual((await client.get(location)).status_code, 401)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['response'], 'Hola')
             repeat = await client.post('/chat', json=payload, headers=headers)
-            self.assertEqual(repeat.json()['status_url'], location)
+            self.assertEqual(repeat.json(), response.json())
             changed = await client.post('/chat', json={**payload,'message':'Other'}, headers=headers)
             self.assertEqual(changed.status_code, 409)
-            await asyncio.sleep(0.08)
-            result = await client.get(location, headers=headers)
-            self.assertEqual(result.json()['result']['response'], 'Hola')
             self.assertEqual(len(graph.calls), 1)
             self.assertFalse((await client.get('/health')).json().get('token'))
             self.assertEqual((await client.delete('/conversations/owner1')).status_code, 401)

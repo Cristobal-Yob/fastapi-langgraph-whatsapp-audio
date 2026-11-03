@@ -17,9 +17,11 @@ def validate_token(value):
 def public_origin():
     value = os.environ.get('PUBLIC_ORIGIN', '')
     parsed = urlsplit(value)
-    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
-            or parsed.path or parsed.query or parsed.fragment or parsed.port not in {None, 443}):
-        raise ValueError('PUBLIC_ORIGIN must be the exact HTTPS application origin, without a trailing slash.')
+    local = (not os.environ.get('DYNO') and parsed.scheme == 'http'
+             and parsed.hostname in {'localhost', '127.0.0.1', '::1'})
+    if ((not local and parsed.scheme != 'https') or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path or parsed.query or parsed.fragment or (not local and parsed.port not in {None,443})):
+        raise ValueError('PUBLIC_ORIGIN must be the exact HTTPS origin; HTTP is only supported for local loopback.')
     return value
 
 

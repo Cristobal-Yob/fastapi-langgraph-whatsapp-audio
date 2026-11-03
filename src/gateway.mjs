@@ -1,4 +1,4 @@
-import { makeWASocket, initAuthCreds, BufferJSON, proto, generateMessageIDV2, Browsers } from '@whiskeysockets/baileys';
+import { makeWASocket, generateMessageIDV2, Browsers } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
 import { Store } from './store.mjs';
@@ -6,8 +6,6 @@ import { normalizeJid, stableIds } from './guard.mjs';
 import { ask } from './backend.mjs';
 
 const logger = pino({ level:'silent' });
-const encode = value => Buffer.from(JSON.stringify(value,BufferJSON.replacer));
-const decode = value => JSON.parse(value.toString(),BufferJSON.reviver);
 
 export class Gateway {
   constructor({ parse, pipeline = null, audio = false }) {
@@ -23,27 +21,11 @@ export class Gateway {
     if (process.env.WA_ENABLE_CONNECTION !== 'true' || this.socket || this.closed) throw Error('connection_not_authorized');
     this.store = await Store.open();
     this.store.onLost = () => this.halt();
-    let creds = await this.store.read('creds'); creds = creds ? decode(creds) : initAuthCreds();
-    const keys = {
-      get:async (type, ids) => {
-        const result = {};
-        for (const id of ids) {
-          const bytes = await this.store.read('key:'+type+':'+id);
-          if (bytes) { let value = decode(bytes); if (type === 'app-state-sync-key') value = proto.Message.AppStateSyncKeyData.fromObject(value); result[id] = value; }
-        }
-        return result;
-      },
-      set:async value => {
-        for (const [type,entries] of Object.entries(value))
-          for (const [id,data] of Object.entries(entries)) await this.store.write('key:'+type+':'+id, data ? encode(data) : null);
-      }
-    };
-    await this.store.write('creds',encode(creds));
-    this.socket = makeWASocket({ auth:{ creds,keys },logger,browser:Browsers.ubuntu('Chrome'),
+    this.socket = makeWASocket({ auth:this.store.auth,logger,browser:Browsers.ubuntu('Chrome'),
       printQRInTerminal:false,syncFullHistory:false,markOnlineOnConnect:false,shouldSyncHistoryMessage:()=>false });
     this.status = 'connecting';
     this.socket.ev.on('creds.update', () => {
-      this.authWrites = this.authWrites.then(()=>this.store.write('creds',encode(creds))).catch(()=>this.halt());
+      this.authWrites = this.authWrites.then(()=>this.store.saveCreds()).catch(()=>this.halt());
     });
     this.socket.ev.on('connection.update', value => {
       if (value.qr) this.qr = value.qr;
@@ -57,6 +39,7 @@ export class Gateway {
   async accept(event) {
     if (this.closed || this.ready === null || event.type !== 'notify' || event.requestId) return;
     for (const item of event.messages ?? []) {
+      if (item.key?.fromMe !== true) continue;
       if (this.queue.length+(this.busy?1:0) >= 8) break;
       const timestamp = Number(item.messageTimestamp);
       if (!Number.isFinite(timestamp) || timestamp < this.ready-2 || timestamp > Date.now()/1000+30) continue;

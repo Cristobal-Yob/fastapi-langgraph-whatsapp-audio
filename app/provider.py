@@ -104,7 +104,7 @@ def create_graph():
 
     def model(name):
         return ChatGoogleGenerativeAI(
-            model=name, **kwargs, temperature=0, timeout=30, max_retries=0,
+            model=name, **kwargs, temperature=0, timeout=10 if backend == "developer" else 5, max_retries=0,
         )
 
     primary_chat, fallback_chat = model(primary), model(fallback)
