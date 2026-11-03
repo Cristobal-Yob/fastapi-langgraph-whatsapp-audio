@@ -10,7 +10,7 @@ remotos anteriores no acreditan esta versión local de las fuentes.
 
 ## 1. Terminar la configuración específica
 
-Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir otro QR y pierde la deduplicación.
+Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir una nueva vinculación por código o QR y pierde la deduplicación.
 
 No envíe credenciales personales ADC de su equipo a Heroku. El camino básico de este tutorial
 usa una clave propia de Google AI Studio y `GOOGLE_GENAI_USE_VERTEXAI=false`. Si su organización
@@ -25,6 +25,8 @@ del mantenedor ni copie su historial. En la carpeta nueva:
 ```powershell
 git init -b main
 $SourceFiles = @(
+    'src/pairing.mjs', 'src/server.mjs', 'test/pairing.test.mjs',
+    'test/operator.test.mjs', 'test/network-guard.mjs', 'test/docs.test.mjs',
     'DURABILIDAD.md',
     '.env.example', '.gitattributes', '.gitignore',
     '.python-version', 'Aptfile', 'CONFIGURACION.md',
@@ -68,6 +70,20 @@ git commit -m "feat: create course assistant from template"
 Este primer commit es necesario: no existe `HEAD` para el push hasta crearlo. Si Git pide su
 nombre/correo, configure su identidad propia; no use una identidad del mantenedor. El commit
 es una instrucción para el lector, no una operación ejecutada al preparar esta guía.
+
+### Publicar primero la versión en su GitHub
+
+Cree desde GitHub un repositorio propio vacío, sin archivos ni credenciales. Después del
+commit revisado del paso anterior, copie su URL HTTPS aquí. No use la URL del docente:
+
+```powershell
+$GitHubUrl = Read-Host 'URL HTTPS de su repositorio GitHub vacío'
+git remote add origin $GitHubUrl
+git push -u origin main
+```
+
+El despliegue debe corresponder a ese mismo commit publicado. No añada `.env`, números,
+códigos, `.runtime` o `node_modules` al historial. Esta guía no crea un workflow automático.
 
 ## 3. Crear una app o seleccionar una existente
 
@@ -156,7 +172,7 @@ compartir una captura: muestra los valores. No pegue secretos en ejemplos, chats
 
 ### Valores complejos o multilínea
 
-Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir otro QR y pierde la deduplicación.
+Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir una nueva vinculación por código o QR y pierde la deduplicación.
 
 
 El comando nativo siguiente abre todas las variables en un editor. Configure un editor local
@@ -198,6 +214,7 @@ instancia adecuada antes de validarlo. Si no tiene un tamaño validado para esos
 
 ```powershell
 heroku git:remote --app $App
+if ((git rev-parse HEAD) -ne (git rev-parse origin/main)) { throw 'Publique primero este commit en su GitHub.' }
 git push heroku HEAD:main
 $DynoType = 'basic'
 heroku ps:scale "web=1:$DynoType" --app $App
@@ -216,6 +233,26 @@ Para comprobar sin activar efectos el core de los adaptadores con servidor priva
 pruebas locales de [CREAR_AGENTE.md](CREAR_AGENTE.md). Una comprobación autenticada incorrecta
 debe fallar; no quite el bearer para lograr una respuesta. Active su canal real solo cuando
 quiera probar una acción explícita y sus proveedores estén autorizados.
+
+### Autorizar la vinculación de su celular
+
+Con la app desplegada y sus variables privadas válidas, autorice esta acción y active:
+
+```powershell
+heroku config:set WA_ENABLE_CONNECTION=true --app $App
+```
+
+Abra su URL HTTPS, desbloquee con su bearer y pulse **Iniciar vinculación**. En el modo
+principal ingrese su propio número solo en el panel y solicite el código una vez; luego
+introdúzcalo en WhatsApp, Dispositivos vinculados, Vincular con número de teléfono.
+No es un SMS. **Conectado**, no la aparición del código, confirma la sesión. Pruebe un
+mensaje nuevo en Mensaje para ti. QR es una alternativa manual antes de pedir el código.
+
+Si el resultado no se confirma, revise su celular, pulse **Desconectar**, espere el cierre
+y pulse **Iniciar nuevo intento**. No reinicie Heroku ni borre autenticación para reintentar
+desde el panel. Use un solo conector por celular, tanto al probar texto como texto/audio.
+El deploy/reinicio del dyno sí puede perder la sesión por disco efímero. El recorrido completo,
+los límites y la privacidad están en [CONFIGURACION.md](CONFIGURACION.md).
 
 ## 6. Actualizar, diagnosticar y apagar
 

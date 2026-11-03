@@ -1,13 +1,71 @@
-<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WhatsApp · operador</title>
-<style>body{font:18px system-ui;max-width:42rem;margin:4rem auto;padding:1rem;background:#10151d;color:#f7f8fb}input,button{font:inherit;padding:.7rem;margin:.4rem 0}img{display:block;max-width:18rem}button{cursor:pointer}label{display:block}</style>
-<h1>Conectar mi propio chat</h1><p>Baileys no es una API oficial de WhatsApp. Solo se procesan mensajes nuevos de su propio chat. No abra dos conectores para la misma cuenta.</p>
-<label>Clave del operador <input id="key" type="password" autocomplete="off"></label><button id="unlock">Desbloquear</button>
-<p id="state" role="status">Bloqueado</p><button id="connect" disabled>Iniciar vinculación</button><button id="stop" disabled>Detener</button><img id="qr" hidden alt="Código QR privado para vincular su cuenta">
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vincular mi WhatsApp</title>
+<style>body{font:17px system-ui;max-width:760px;margin:3rem auto;padding:0 1rem;line-height:1.6}label{display:block;margin:1rem 0}input,button{font:inherit;padding:.6rem}button{margin:.3rem}#codeValue{font:2rem monospace}img{max-width:280px}fieldset{border:1px solid #ccc;padding:1rem}[hidden]{display:none!important}</style>
+<h1>Vincular mi propio WhatsApp</h1>
+<p>Un celular por aplicación. Baileys es un conector no oficial. Pruebe solo en su chat Mensaje para ti y mantenga un único conector activo para ese celular.</p>
+<label>Clave del operador <input id="key" type="password" autocomplete="off"></label>
+<button id="unlock">Desbloquear</button>
+<p id="state" role="status">Bloqueado</p>
+<button id="connect" disabled>Iniciar vinculación</button><button id="stop" disabled>Desconectar</button>
+<section id="linking" hidden>
+<h2 id="mode">Vinculación por código</h2>
+<p>Después de iniciar, espere a que WhatsApp habilite la solicitud. No necesita escanear un QR para obtener el código.</p>
+<form id="phoneForm" autocomplete="off">
+<label>Su número con código de país, solo dígitos y sin + ni espacios
+<input id="phone" name="phone" type="tel" inputmode="numeric" autocomplete="off" pattern="[1-9][0-9]{6,14}" minlength="7" maxlength="15" required></label>
+<button id="requestCode" disabled>Obtener código para mi número</button>
+</form>
+<div id="codeBox" hidden><h3>Código generado, vinculación pendiente</h3><p id="codeValue"></p>
+<p>En su celular: Dispositivos vinculados, Vincular un dispositivo, Vincular con número de teléfono. Ingrese el código aquí mostrado. No es un SMS. No lo comparta en chats ni capturas.</p></div>
+<button id="useQr" disabled>Usar QR en lugar del código</button><button id="useCode" hidden>Usar código</button>
+<img id="qr" hidden alt="QR privado para vincular su propia cuenta">
+</section>
+<p id="detail">No ingrese claves, su número ni códigos en Git, archivos de configuración o registros.</p>
 <script>
-let token='',csrf='',timer;const find=id=>document.getElementById(id);
-async function api(path,method='GET'){const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token,'X-CSRF-Token':csrf}});if(!r.ok)throw Error();return r.json()}
-async function refresh(){try{const s=await api('/api/status');csrf=s.csrf;find('state').textContent=s.status;const q=await api('/api/qr');find('qr').hidden=!q.image;if(q.image)find('qr').src=q.image;else find('qr').removeAttribute('src')}catch{clearInterval(timer);find('state').textContent='Acceso no disponible. No se reintentó la conexión.'}}
-find('unlock').onclick=async()=>{token=find('key').value;find('key').value='';await refresh();if(csrf){find('connect').disabled=false;find('stop').disabled=false;timer=setInterval(refresh,2500)}};
-find('connect').onclick=async()=>{find('connect').disabled=true;try{await api('/api/connect','POST');await refresh()}catch{find('state').textContent='Inicio no disponible'}};
-find('stop').onclick=async()=>{await api('/api/stop','POST');await refresh()};
-</script></html>
+let token='',csrf='',timer=null,codeTimer=null,refreshController=null,viewRevision=0,codeRevision=0;
+const find=id=>document.getElementById(id);
+const labels={disabled:'Preparado para iniciar',preparing:'Preparando conexión',connecting:'Esperando a WhatsApp',restarting:'Finalizando vinculación',connected:'Conectado',review_required:'Revisión necesaria',stopping:'Desconectando',stopped:'Desconectado'};
+function clearCode(){codeRevision++;clearTimeout(codeTimer);codeTimer=null;find('codeValue').textContent='';find('codeBox').hidden=true;}
+function clearPrivate(){viewRevision++;refreshController?.abort();refreshController=null;clearCode();find('qr').hidden=true;find('qr').removeAttribute('src');find('phone').value='';}
+async function api(path,method='GET',body,signal){const headers={Authorization:'Bearer '+token,'X-CSRF-Token':csrf};if(body)headers['Content-Type']='application/json';const response=await fetch(path,{method,headers,body:body ? JSON.stringify(body) : undefined,cache:'no-store',signal});if(!response.ok)throw Error('operation_unavailable');return response.json();}
+async function refresh(){
+ if(refreshController)return;const controller=new AbortController();refreshController=controller;const revision=viewRevision;
+ const current=()=>!controller.signal.aborted && revision===viewRevision;
+ try{
+  const status=await api('/api/status','GET',undefined,controller.signal);if(!current())return;csrf=status.csrf;
+  find('state').textContent=labels[status.status]??'Estado no disponible';
+  const active=!['stopping','stopped','review_required','connected'].includes(status.status);
+  find('connect').disabled=!['disabled','stopped'].includes(status.status);
+  find('connect').textContent=status.status==='stopped' ? 'Iniciar nuevo intento' : 'Iniciar vinculación';
+  find('stop').disabled=['disabled','stopped','stopping'].includes(status.status);
+  find('linking').hidden=!active;find('requestCode').disabled=!status.code_ready;
+  find('phoneForm').hidden=status.mode!=='code';find('useQr').hidden=status.mode==='qr';
+  find('useQr').disabled=!status.can_switch;find('useCode').hidden=status.mode!=='qr';find('useCode').disabled=!status.can_switch;
+  find('mode').textContent=status.mode==='qr' ? 'Vinculación por QR' : 'Vinculación por código';
+  clearCode();find('qr').hidden=true;find('qr').removeAttribute('src');
+  if(active && status.mode==='code'){
+   const result=await api('/api/code','GET',undefined,controller.signal);if(!current())return;
+   const remaining=result.expires_at-Date.now();
+   if(/^[A-Z0-9]{8}$/.test(result.code??'') && Number.isFinite(result.expires_at) && remaining>0 && remaining<=120000){
+    find('codeValue').textContent=result.code.slice(0,4)+'-'+result.code.slice(4);find('codeBox').hidden=false;
+    const shown=codeRevision;codeTimer=setTimeout(()=>{if(revision===viewRevision && shown===codeRevision)clearCode()},remaining);
+   }
+  }else if(active && status.mode==='qr'){
+   const result=await api('/api/qr','GET',undefined,controller.signal);if(!current())return;if(result.image){find('qr').src=result.image;find('qr').hidden=false;}
+  }
+  find('detail').textContent=status.status==='connected' ? 'Vinculación confirmada. Envíe un mensaje nuevo en Mensaje para ti.' :
+   status.status==='review_required' ? 'Resultado no confirmado. Revise Dispositivos vinculados en su celular, pulse Desconectar y luego Iniciar nuevo intento. No se solicitó otro código automáticamente.' :
+   status.status==='stopping' ? 'Espere a que terminen las operaciones anteriores. No se borrarán sus credenciales.' :
+   status.code_state==='pending' ? 'Solicitando el código una sola vez. Espere sin reenviar el formulario.' : 'El código se borra al vencer o desconectar. No es un SMS ni confirma todavía la vinculación.';
+ }catch{if(!current())return;clearInterval(timer);clearPrivate();find('linking').hidden=true;find('connect').disabled=true;find('stop').disabled=true;find('state').textContent='Acceso no disponible. Desbloquee de nuevo para consultar el estado.';}
+ finally{if(refreshController===controller)refreshController=null;}
+}
+find('unlock').onclick=async()=>{clearInterval(timer);clearPrivate();csrf='';token=find('key').value;find('key').value='';await refresh();if(csrf)timer=setInterval(refresh,2500);};
+find('connect').onclick=async()=>{find('connect').disabled=true;clearPrivate();try{await api('/api/connect','POST');await refresh();}catch{find('detail').textContent='No se pudo iniciar. Compruebe la configuración y el estado antes de reintentar.';}};
+find('stop').onclick=async()=>{find('stop').disabled=true;clearPrivate();try{await api('/api/stop','POST');await refresh();}catch{find('detail').textContent='No se confirmó la desconexión. Revise el estado antes de iniciar otro intento.';}};
+find('phoneForm').onsubmit=async event=>{event.preventDefault();find('requestCode').disabled=true;const phone=find('phone').value;find('phone').value='';try{await api('/api/code','POST',{phone});await refresh();}catch{find('detail').textContent='No se confirmó la solicitud. No se generará otro código automáticamente; consulte el estado y revise su celular.';}};
+for(const [id,mode] of [['useQr','qr'],['useCode','code']])find(id).onclick=async()=>{clearPrivate();try{await api('/api/mode','POST',{mode});await refresh();}catch{find('detail').textContent='No puede cambiar de modo después de solicitar un código. Revise el celular y desconecte antes de otro intento.';}};
+</script>
+</html>

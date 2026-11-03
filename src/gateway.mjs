@@ -4,36 +4,74 @@ import { createHash } from 'node:crypto';
 import { Store } from './store.mjs';
 import { normalizeJid, stableIds } from './guard.mjs';
 import { ask } from './backend.mjs';
+import { PhoneLink } from './pairing.mjs';
 
 const logger = pino({ level:'silent' });
 
 export class Gateway {
-  constructor({ parse, pipeline = null, audio = false }) {
-    Object.assign(this,{ parse,pipeline,audio });
-    this.status = 'disabled'; this.socket = this.store = this.qr = null;
-    this.busy = false; this.ready = null; this.queue = []; this.authWrites = Promise.resolve(); this.closed = false;
+  constructor({parse,pipeline=null,audio=false,createSocket=makeWASocket,openStore=()=>Store.open(),
+    maxReconnects=3,reconnectMs=1000}) {
+    Object.assign(this,{parse,pipeline,audio,createSocket,openStore,maxReconnects,reconnectMs});
+    this.status='disabled';this.socket=this.store=this.qr=null;
+    this.busy=false;this.ready=null;this.queue=[];this.authWrites=Promise.resolve();this.closed=false;
+    this.generation=0;this.reconnects=0;this.everConnected=false;this.pairingRestarted=false;
+    this.pairing=new PhoneLink({onUncertain:()=>this.halt()});
   }
+  enabled() {return process.env.WA_ENABLE_CONNECTION==='true';}
+  requestCode(phone) {return !this.closed && this.pairing.request(phone);}
   halt() {
-    this.status = 'review_required'; this.closed = true; this.ready = null; this.qr = null;
-    this.socket?.end(Error('transport_stopped')); this.pipeline?.close(); this.queue.length = 0;
+    if(this.closed)return;
+    this.status='review_required';this.closed=true;this.ready=null;this.qr=null;this.generation++;
+    clearTimeout(this.reconnectTimer);this.pairing.stop();this.queue.length=0;
+    try{this.socket?.end(Error('transport_stopped'))}catch{}
+    this.pipelineClosed=Promise.resolve().then(()=>this.pipeline?.close());
+    this.pipelineClosed.catch(()=>{});
   }
   async connect() {
-    if (process.env.WA_ENABLE_CONNECTION !== 'true' || this.socket || this.closed) throw Error('connection_not_authorized');
-    this.store = await Store.open();
-    this.store.onLost = () => this.halt();
-    this.socket = makeWASocket({ auth:this.store.auth,logger,browser:Browsers.ubuntu('Chrome'),
-      printQRInTerminal:false,syncFullHistory:false,markOnlineOnConnect:false,shouldSyncHistoryMessage:()=>false });
-    this.status = 'connecting';
-    this.socket.ev.on('creds.update', () => {
-      this.authWrites = this.authWrites.then(()=>this.store.saveCreds()).catch(()=>this.halt());
+    if(!this.enabled() || this.status!=='disabled' || this.closed)throw Error('connection_not_authorized');
+    this.status='preparing';
+    this.opening=Promise.resolve().then(()=>this.closed ? null : this.openStore());
+    this.store=await this.opening;
+    if(this.closed) {if(this.store)await this.store.close();return;}
+    this.store.onLost=()=>this.halt();this.openSocket(true);
+  }
+  openSocket(newAttempt=false) {
+    if(this.closed)return;
+    const generation=++this.generation;
+    const socket=this.createSocket({auth:this.store.auth,logger,browser:Browsers.ubuntu('Chrome'),
+      printQRInTerminal:false,syncFullHistory:false,markOnlineOnConnect:false,shouldSyncHistoryMessage:()=>false});
+    this.socket=socket;this.status='connecting';this.pairing.begin(socket,this.store.auth.creds,{newAttempt});
+    const current=()=>!this.closed && generation===this.generation && socket===this.socket;
+    socket.ev.on('creds.update',()=>{
+      if(!current())return;
+      this.authWrites=this.authWrites.then(()=>this.store.saveCreds()).catch(()=>this.halt());
     });
-    this.socket.ev.on('connection.update', value => {
-      if (value.qr) this.qr = value.qr;
-      if (value.connection === 'open') { this.qr = null; this.ready = Date.now()/1000; this.status = 'connected'; }
-      if (value.connection === 'close') this.halt(); // No automatic reconnect/replay on uncertain ownership.
+    socket.ev.on('connection.update',value=>{
+      if(!current())return;
+      if(Object.hasOwn(value,'qr')) {this.qr=typeof value.qr==='string' ? value.qr : null;this.pairing.observeQr(socket,value.qr);}
+      if(value.connection==='open') {
+        const identities=[socket.user?.id,socket.user?.lid].map(normalizeJid).filter(Boolean);
+        if(this.store.auth.creds.registered!==true || !identities.length){this.halt();return;}
+        this.pairing.stop();this.qr=null;this.ready=Date.now()/1000;this.status='connected';this.everConnected=true;
+      }
+      if(value.connection==='close') {
+        const code=value.lastDisconnect?.error?.output?.statusCode;
+        const registered=this.store.auth.creds.registered===true;
+        const safe=code===515 ? registered && !this.pairingRestarted :
+          [405,408].includes(code) && (!this.pairing.attempted || this.everConnected);
+        this.ready=null;this.qr=null;this.pairing.stop();
+        if(!safe || this.reconnects>=this.maxReconnects){this.halt();return;}
+        if(code===515)this.pairingRestarted=true;
+        this.reconnects++;this.socket=null;this.status='restarting';const revision=++this.generation;
+        this.reconnectTimer=setTimeout(()=>{
+          void this.authWrites.then(()=>{if(!this.closed && revision===this.generation)this.openSocket()}).catch(()=>this.halt());
+        },this.reconnectMs);
+        this.reconnectTimer.unref?.();
+      }
     });
-    this.socket.ev.on('messages.upsert', value => {
-      this.serial = (this.serial ?? Promise.resolve()).then(()=>this.accept(value)).catch(()=>this.halt());
+    socket.ev.on('messages.upsert',value=>{
+      if(!current())return;
+      this.serial=(this.serial??Promise.resolve()).then(()=>this.accept(value)).catch(()=>this.halt());
     });
   }
   async accept(event) {
@@ -51,7 +89,7 @@ export class Gateway {
       const identity = identities.find(value=>value.endsWith('@s.whatsapp.net')) ?? identities[0];
       this.queue.push({ ...input,id:messageId,jid:item.key.remoteJid,ids:stableIds(identity,item.key.id) });
     }
-    if (!this.busy) { this.busy = true; void this.drain().catch(()=>this.halt()).finally(()=>{ this.busy = false; }); }
+    if (!this.busy) { this.busy = true; this.drainPromise = this.drain().catch(()=>this.halt()).finally(()=>{ this.busy = false; }); }
   }
   async drain() {
     while (!this.closed && this.queue.length) {
@@ -75,9 +113,14 @@ export class Gateway {
       await this.store.done('out:'+id); await this.store.done('in:'+item.id);
     }
   }
-  async close() {
+  close() {
+    if(this.closePromise)return this.closePromise;
     this.halt();
-    await this.authWrites;
-    if (this.store) await this.store.close();
+    this.closePromise=(async()=>{
+      const results=await Promise.allSettled([this.opening,this.serial,this.drainPromise,this.pipelineClosed,this.authWrites]);
+      if(this.store)await this.store.close();
+      if(results.some(result=>result.status==='rejected'))throw Error('transport_close_incomplete');
+    })();
+    return this.closePromise;
   }
 }

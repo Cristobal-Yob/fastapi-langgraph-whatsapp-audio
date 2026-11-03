@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "python -B -m cloud.run",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --import ./test/network-guard.mjs --test --test-concurrency=1 test/*.test.mjs"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc14",

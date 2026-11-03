@@ -25,6 +25,8 @@ if (Test-Path -LiteralPath $Destination) { throw 'El destino debe ser nuevo y es
 $null = New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force
 $null = New-Item -ItemType Directory -Path $Destination
 $SourceFiles = @(
+    'src/pairing.mjs', 'src/server.mjs', 'test/pairing.test.mjs',
+    'test/operator.test.mjs', 'test/network-guard.mjs', 'test/docs.test.mjs',
     'DURABILIDAD.md',
     '.env.example', '.gitattributes', '.gitignore',
     '.python-version', 'Aptfile', 'CONFIGURACION.md',
@@ -89,7 +91,7 @@ Conserve `variant.json`: identifica el adaptador que desplegará después. La f�
 carga el `.env` de esta carpeta con `override=False`; una variable de la terminal tiene prioridad.
 Mantenga desactivados los envíos, la vinculación y los proveedores de audio/vídeo.
 
-Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir otro QR y pierde la deduplicación.
+Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir una nueva vinculación por código o QR y pierde la deduplicación.
 
 ## 3. Cambiar el rol y los criterios, sin romper el contrato
 
@@ -288,4 +290,11 @@ Pruebas de la plantilla, sin cuentas:
 & .\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
 ```
 
-Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir otro QR y pierde la deduplicación.
+Baileys guarda únicamente credenciales y claves Signal con su helper nativo en `.runtime/whatsapp-auth`, privado e ignorado por Git. No guarda cuerpos de mensajes, audios ni transcripciones. El ledger de entrada/salida vive en RAM, admite 2048 IDs y rechaza al llenarse; no expulsa acciones inciertas. Use un único Node/worker/dyno y no ejecute ambas variantes con la misma cuenta. En Heroku el disco es efímero: un reinicio/deploy puede exigir una nueva vinculación por código o QR y pierde la deduplicación.
+## Vincular su propio celular
+
+Después de publicar su commit en GitHub y desplegarlo según `HEROKU.md`, siga
+[la vinculación por código](CONFIGURACION.md). El número y el código se introducen solo
+en el panel privado, nunca en `.env`. QR sigue disponible como alternativa manual.
+Un resultado incierto requiere revisar el celular, Desconectar e Iniciar nuevo intento;
+no se borra la sesión ni se reinicia Heroku para esa acción del panel.
